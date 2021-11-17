@@ -15,6 +15,7 @@
 package gdbadapter
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 
@@ -40,6 +41,32 @@ type Adapter struct {
 	DataSourceName string
 	TableName      string
 	Db             gdb.DB
+}
+
+// AddPolicies adds multiple policy rules to the storage.
+func (a *Adapter) AddPolicies(sec string, ptype string, rules [][]string) error {
+	return a.Db.Transaction(context.Background(), func(ctx context.Context, tx *gdb.TX) error {
+		for _, rule := range rules {
+			line := savePolicyLine(ptype, rule)
+			if _, err := tx.Model(a.TableName).Data(&line).Insert(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// RemovePolicy removes multiple policy rules from the storage.
+func (a *Adapter) RemovePolicies(sec string, ptype string, rules [][]string) error {
+	return a.Db.Transaction(context.Background(), func(ctx context.Context, tx *gdb.TX) error {
+		for _, rule := range rules {
+			line := savePolicyLine(ptype, rule)
+			if err := rawDelete(a, line); err != nil { //can't use db.Delete as we're not using primary key http://jinzhu.me/gorm/crud.html#delete
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // finalizer is the destructor for Adapter.
@@ -155,7 +182,7 @@ func loadPolicyLine(line CasbinRule, model model.Model) {
 func (a *Adapter) LoadPolicy(model model.Model) error {
 	var lines []CasbinRule
 
-	if err := a.Db.Table(a.TableName).Scan(&lines); err != nil {
+	if err := a.Db.Model(a.TableName).Scan(&lines); err != nil {
 		return err
 	}
 
@@ -206,7 +233,7 @@ func (a *Adapter) SavePolicy(model model.Model) error {
 	for ptype, ast := range model["p"] {
 		for _, rule := range ast.Policy {
 			line := savePolicyLine(ptype, rule)
-			_, err := a.Db.Table(a.TableName).Data(&line).Insert()
+			_, err := a.Db.Model(a.TableName).Data(&line).Insert()
 			if err != nil {
 				return err
 			}
@@ -216,7 +243,7 @@ func (a *Adapter) SavePolicy(model model.Model) error {
 	for ptype, ast := range model["g"] {
 		for _, rule := range ast.Policy {
 			line := savePolicyLine(ptype, rule)
-			_, err := a.Db.Table(a.TableName).Data(&line).Insert()
+			_, err := a.Db.Model(a.TableName).Data(&line).Insert()
 			if err != nil {
 				return err
 			}
@@ -229,7 +256,7 @@ func (a *Adapter) SavePolicy(model model.Model) error {
 // AddPolicy adds a policy rule to the storage.
 func (a *Adapter) AddPolicy(sec string, ptype string, rule []string) error {
 	line := savePolicyLine(ptype, rule)
-	_, err := a.Db.Table(a.TableName).Data(&line).Insert()
+	_, err := a.Db.Model(a.TableName).Data(&line).Insert()
 	return err
 }
 
@@ -268,7 +295,7 @@ func (a *Adapter) RemoveFilteredPolicy(sec string, ptype string, fieldIndex int,
 }
 
 func rawDelete(a *Adapter, line CasbinRule) error {
-	db := a.Db.Table(a.TableName)
+	db := a.Db.Model(a.TableName)
 
 	db.Where("ptype = ?", line.PType)
 	if line.V0 != "" {
